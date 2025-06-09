@@ -149,9 +149,7 @@
 			v.PluginName("SharedMemory");
 			v.PluginVersion({ 1, 0, 0 });
 			v.UsesAddressLibrary(true);
-			v.CompatibleVersions({ SKSE::RUNTIME_1_6_629,
-				SKSE::RUNTIME_1_6_1130,
-				SKSE::RUNTIME_1_6_1170 });
+			v.CompatibleVersions({ SKSE::RUNTIME_LATEST});
 			return v;
 
 		}();
@@ -168,6 +166,9 @@
 			SKSE::log::info("Plugin loaded!");
 
 			REL::Version runtimeVersion = a_skse->RuntimeVersion();
+
+			
+			//wont even log that since the plugin wont be launched by the game...
 			//SKSE::log::info("Runtime version: {}.{}.{}", runtimeVersion.get_major(), runtimeVersion.get_minor(), runtimeVersion.get_build());
 
 			InitializeSharedMemoryAndSemaphore();

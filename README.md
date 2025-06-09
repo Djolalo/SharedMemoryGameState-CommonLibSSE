@@ -16,8 +16,8 @@ The following instructions have been taken from his README.md aswell, so him and
 
 ## Building
 ```
-git clone https://github.com/Ryan-rsm-McKenzie/ExamplePlugin-CommonLibSSE
-cd ExamplePlugin-CommonLibSSE
+git clone https://github.com/Ryan-rsm-McKenzie/SharedMemoryGameState-CommonLibSSE
+cd SharedMemoryGameState-CommonLibSSE
 git submodule init
 git submodule update
 cmake --preset vs2022-windows
