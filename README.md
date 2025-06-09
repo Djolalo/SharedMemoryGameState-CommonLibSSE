@@ -1,4 +1,8 @@
-This is a basic plugin template for use with CommonLibSSE
+This plugin aims to write in shared memory, in order to be able to access externally game's state (overall considering the use of ice and fire magics). 
+It's using the example plugin provided by @Ryan-rsm-MccKenzie [available here](https://github.com/Ryan-rsm-McKenzie/ExamplePlugin-CommonLibSSE) 
+The following instructions have been taken from his README.md aswell, so him and the team behind CommonlibSSE and SKSE have provided most of the code that we're trying to use here.
+
+------------------------
 
 ## Requirements
 * [CMake](https://cmake.org/)

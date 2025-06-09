@@ -1,52 +1,188 @@
-namespace
-{
-	void InitializeLog()
-	{
-#ifndef NDEBUG
-		auto sink = std::make_shared<spdlog::sinks::msvc_sink_mt>();
-#else
-		auto path = logger::log_directory();
-		if (!path) {
-			util::report_and_fail("Failed to find standard logging directory"sv);
+		#include "SKSE/API.h"
+		#include "SKSE/Skse.h"
+		#include <atomic>
+		#include <chrono>
+		#include <iostream>
+		#include <stdio.h>
+		#include <string>
+		#include <thread>
+		#include <windows.h>
+
+		const wchar_t* sharedMemoryName = L"Global\\MySharedMemory";
+		const wchar_t* semaphoreName = L"Global\\MySharedMemorySemaphore";
+		const size_t sharedMemorySize = 1024;
+
+		std::atomic<bool> stopThread = false;
+		std::thread readerThread;
+
+		HANDLE hSemaphore = NULL;
+		HANDLE hMapObject = NULL;
+		LPVOID pSharedMem = NULL;
+
+		void SharedMemoryReader()
+		{
+			// Create a console window for this thread
+			AllocConsole();
+			FILE* fDummy;
+			freopen_s(&fDummy, "CONOUT$", "w", stdout);
+			freopen_s(&fDummy, "CONOUT$", "w", stderr);
+
+			std::cout << "Shared Memory Monitor Started\n";
+			std::cout << "Press Ctrl+C in this window to stop monitoring\n\n";
+
+			while (!stopThread) {
+				if (pSharedMem != NULL) {
+					// Wait for semaphore
+					WaitForSingleObject(hSemaphore, INFINITE);
+
+					// Print the shared memory content
+					std::cout << "Shared Memory Content: " << (char*)pSharedMem << "\n";
+
+					// Release semaphore
+					ReleaseSemaphore(hSemaphore, 1, NULL);
+				}
+
+				// Sleep to prevent high CPU usage
+				std::this_thread::sleep_for(std::chrono::milliseconds(500));
+			}
+
+			// Cleanup console
+			fclose(fDummy);
+			FreeConsole();
 		}
 
-		*path /= fmt::format("{}.log"sv, Plugin::NAME);
-		auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
-#endif
+		void InitializeSharedMemoryAndSemaphore()
+		{
+			// Set up security attributes to allow cross-process access
+			SECURITY_ATTRIBUTES sa;
+			sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+			sa.bInheritHandle = FALSE;  // Handles are not inherited by child processes
 
-#ifndef NDEBUG
-		const auto level = spdlog::level::trace;
-#else
-		const auto level = spdlog::level::info;
-#endif
+			// Create a NULL DACL (allow all access)
+			SECURITY_DESCRIPTOR sd;
+			InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
+			SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
+			sa.lpSecurityDescriptor = &sd;
 
-		auto log = std::make_shared<spdlog::logger>("global log"s, std::move(sink));
-		log->set_level(level);
-		log->flush_on(level);
+			// Create or open the semaphore with the security attributes
+			hSemaphore = CreateSemaphoreW(
+				&sa,  // Security attributes
+				1,    // Initial count
+				1,    // Maximum count
+				semaphoreName);
 
-		spdlog::set_default_logger(std::move(log));
-		spdlog::set_pattern("%g(%#): [%^%l%$] %v"s);
-	}
-}
+			if (hSemaphore == NULL) {
+				DWORD error = GetLastError();
+				MessageBoxA(NULL, ("Semaphore creation failed: " + std::to_string(error)).c_str(), "Error", MB_OK);
+				return;
+			}
 
-extern "C" DLLEXPORT constinit auto SKSEPlugin_Version = []() {
-	SKSE::PluginVersionData v;
+			// Create shared memory with the same security attributes
+			hMapObject = CreateFileMappingW(
+				INVALID_HANDLE_VALUE,
+				&sa,  // Security attributes
+				PAGE_READWRITE,
+				0,
+				sharedMemorySize,
+				sharedMemoryName);
 
-	v.PluginVersion(Plugin::VERSION);
-	v.PluginName(Plugin::NAME);
+			if (hMapObject == NULL) {
+				DWORD error = GetLastError();
+				CloseHandle(hSemaphore);
+				MessageBoxA(NULL, ("Shared memory creation failed: " + std::to_string(error)).c_str(), "Error", MB_OK);
+				return;
+			}
 
-	v.UsesAddressLibrary(true);
-	v.CompatibleVersions({ SKSE::RUNTIME_LATEST });
+			// Map the shared memory
+			pSharedMem = MapViewOfFile(
+				hMapObject,
+				FILE_MAP_ALL_ACCESS,
+				0,
+				0,
+				sharedMemorySize);
 
-	return v;
-}();
+			if (pSharedMem == NULL) {
+				DWORD error = GetLastError();
+				CloseHandle(hMapObject);
+				CloseHandle(hSemaphore);
+				MessageBoxA(NULL, ("Memory mapping failed: " + std::to_string(error)).c_str(), "Error", MB_OK);
+				return;
+			}
 
-extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_skse)
-{
-	InitializeLog();
-	logger::info("{} v{}"sv, Plugin::NAME, Plugin::VERSION.string());
+			// Start the reader thread
+			readerThread = std::thread(SharedMemoryReader);
+		}
 
-	SKSE::Init(a_skse);
+		void WriteToSharedMemory(const std::string& message)
+		{
+			if (pSharedMem != NULL) {
+				// Wait 
+				WaitForSingleObject(hSemaphore, INFINITE);
 
-	return true;
-}
+				// P
+				memcpy(pSharedMem, message.c_str(), message.size() + 1);
+
+				// V
+				ReleaseSemaphore(hSemaphore, 1, NULL);
+			}
+		}
+
+
+		//Clears sharedmemory (if used)
+		void Cleanup()
+		{
+			if (pSharedMem != NULL) {
+				UnmapViewOfFile(pSharedMem);
+			}
+			if (hMapObject != NULL) {
+				CloseHandle(hMapObject);
+			}
+			if (hSemaphore != NULL) {
+				CloseHandle(hSemaphore);
+			}
+		}
+
+
+		//Sets the plugin version in the dll
+		extern "C" DLLEXPORT constinit SKSE::PluginVersionData SKSEPlugin_Version = [] {
+			SKSE::PluginVersionData v{};
+			v.PluginName("SharedMemory");
+			v.PluginVersion({ 1, 0, 0 });
+			v.UsesAddressLibrary(true);
+			v.CompatibleVersions({ SKSE::RUNTIME_1_6_629,
+				SKSE::RUNTIME_1_6_1130,
+				SKSE::RUNTIME_1_6_1170 });
+			return v;
+
+		}();
+
+
+
+
+		//Called on plugin loading
+		extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_skse)
+		{
+			
+
+			SKSE::Init(a_skse);
+			SKSE::log::info("Plugin loaded!");
+
+			REL::Version runtimeVersion = a_skse->RuntimeVersion();
+			//SKSE::log::info("Runtime version: {}.{}.{}", runtimeVersion.get_major(), runtimeVersion.get_minor(), runtimeVersion.get_build());
+
+			InitializeSharedMemoryAndSemaphore();
+			WriteToSharedMemory("Hello from SKSE Plugin!");
+			return true;
+		}
+
+		//Stops the thread, and cleans the shared memory segment to avoid any leakage.
+		extern "C" DLLEXPORT void SKSEPlugin_Unload()
+		{
+			stopThread = true;
+
+			if (readerThread.joinable()) {
+				readerThread.join();
+			}
+
+			Cleanup();
+		}
